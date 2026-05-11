@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Excel-Agent · 上传 & 预览码</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+    .container {
+      max-width: 880px;
+      margin: 0 auto;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.2);
+      overflow: hidden;
+    }
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      padding: 32px;
+      text-align: center;
+    }
+    .header h1 { margin: 0; font-size: 26px; }
+    .header p { margin: 8px 0 0; opacity: .9; font-size: 14px; }
+    .body { padding: 28px 32px 36px; }
+
+    .step {
+      border: 1px solid #eef0f4;
+      border-radius: 12px;
+      padding: 20px 22px;
+      margin-bottom: 18px;
+      background: #fafbfd;
+    }
+    .step h2 {
+      margin: 0 0 14px;
+      font-size: 16px;
+      color: #2d3748;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 24px; border-radius: 50%;
+      background: #667eea; color: #fff; font-size: 13px; font-weight: 600;
+    }
+
+    .uploader {
+      display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    }
+    input[type="file"] {
+      flex: 1; min-width: 240px;
+      padding: 10px 12px;
+      border: 1px dashed #cbd5e0;
+      border-radius: 8px;
+      background: #fff;
+    }
+    button {
+      padding: 10px 20px;
+      border: 0;
+      border-radius: 8px;
+      background: #667eea;
+      color: #fff;
+      font-size: 14px;
+      cursor: pointer;
+      transition: .2s;
+    }
+    button:hover:not(:disabled) { background: #5568d3; }
+    button:disabled { background: #a0aec0; cursor: not-allowed; }
+
+    .result {
+      margin-top: 14px;
+      padding: 14px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.6;
+      word-break: break-all;
+    }
+    .result.ok { background: #f0fff4; border: 1px solid #9ae6b4; color: #22543d; }
+    .result.err { background: #fff5f5; border: 1px solid #feb2b2; color: #742a2a; }
+    .result a { color: #5a67d8; text-decoration: underline; }
+
+    pre {
+      background: #1a202c; color: #e2e8f0;
+      padding: 14px; border-radius: 8px;
+      overflow: auto; max-height: 240px;
+      font-size: 12px; margin: 10px 0 0;
+    }
+
+    .qr-box {
+      margin-top: 14px;
+      text-align: center;
+      padding: 18px;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+    }
+    .qr-box img { max-width: 260px; width: 100%; }
+    .muted { color: #718096; font-size: 12px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Excel-Agent</h1>
+      <p>上传 Excel → 解析为规则 JSON → 获取小程序预览码</p>
+    </div>
+    <div class="body">
+
+      <!-- Step 1 -->
+      <div class="step">
+        <h2><span class="badge">1</span>上传 Excel 文件</h2>
+        <div class="uploader">
+          <input type="file" id="file" accept=".xlsx,.xls,.csv" />
+          <button id="btnUpload">上传并解析</button>
+        </div>
+        <div id="uploadResult"></div>
+      </div>
+
+      <!-- Step 2 -->
+      <div class="step">
+        <h2><span class="badge">2</span>获取小程序预览码</h2>
+        <div class="uploader">
+          <button id="btnPreview">获取预览码</button>
+          <span class="muted">将调用本地 30747 端口接口</span>
+        </div>
+        <div id="previewResult"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    $('btnUpload').addEventListener('click', async () => {
+      const fileInput = $('file');
+      const out = $('uploadResult');
+      out.innerHTML = '';
+
+      if (!fileInput.files || !fileInput.files[0]) {
+        out.innerHTML = '<div class="result err">请先选择一个 Excel 文件</div>';
+        return;
+      }
+
+      const fd = new FormData();
+      fd.append('file', fileInput.files[0]);
+
+      $('btnUpload').disabled = true;
+      $('btnUpload').textContent = '解析中...';
+
+      try {
+        const resp = await fetch('/api/upload', { method: 'POST', body: fd });
+        const data = await resp.json();
+        if (!data.ok) {
+          out.innerHTML = `<div class="result err">解析失败：${data.error || '未知错误'}</div>`;
+          return;
+        }
+        out.innerHTML = `
+          <div class="result ok">
+            ✅ 解析成功，共 <b>${data.recordCount}</b> 条记录<br/>
+            data.json 访问地址：<a href="${data.dataJsonUrl}" target="_blank">${data.dataJsonUrl}</a>
+          </div>
+          <pre>${escapeHtml(JSON.stringify(data.preview, null, 2))}</pre>
+        `;
+      } catch (e) {
+        out.innerHTML = `<div class="result err">请求失败：${e.message}</div>`;
+      } finally {
+        $('btnUpload').disabled = false;
+        $('btnUpload').textContent = '上传并解析';
+      }
+    });
+
+    $('btnPreview').addEventListener('click', async () => {
+      const out = $('previewResult');
+      out.innerHTML = '';
+      $('btnPreview').disabled = true;
+      $('btnPreview').textContent = '获取中...';
+
+      try {
+        const resp = await fetch('/api/preview');
+        const data = await resp.json();
+        if (!data.ok) {
+          out.innerHTML = `<div class="result err">获取失败：${data.error || '未知错误'}</div>`;
+          return;
+        }
+        if (data.type === 'image') {
+          out.innerHTML = `
+            <div class="qr-box">
+              <img src="${data.publicUrl}" alt="小程序预览码" />
+              <div class="muted">扫码即可在微信中预览小程序</div>
+              <div class="muted">图片地址：<a href="${data.publicUrl}" target="_blank">${data.publicUrl}</a></div>
+            </div>`;
+        } else {
+          out.innerHTML = `
+            <div class="result ok">接口返回 (${data.type}):</div>
+            <pre>${escapeHtml(typeof data.data === 'string' ? data.data : JSON.stringify(data.data, null, 2))}</pre>
+          `;
+        }
+      } catch (e) {
+        out.innerHTML = `<div class="result err">请求失败：${e.message}</div>`;
+      } finally {
+        $('btnPreview').disabled = false;
+        $('btnPreview').textContent = '获取预览码';
+      }
+    });
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[c]));
+    }
+  </script>
+</body>
+</html>

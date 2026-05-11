@@ -83,6 +83,57 @@ const fetchPreviewTool = tool(
   }
 );
 
+/** Tool 3: 查询当前 data.json 的内容/统计 */
+const queryDataJsonTool = tool(
+  async ({ filterType, limit }) => {
+    if (!fs.existsSync(DATA_JSON_PATH)) {
+      return JSON.stringify({ ok: false, error: '尚未生成 data.json，请先上传 Excel 解析' });
+    }
+    let data;
+    try {
+      data = JSON.parse(fs.readFileSync(DATA_JSON_PATH, 'utf8'));
+    } catch (e) {
+      return JSON.stringify({ ok: false, error: 'data.json 解析失败：' + e.message });
+    }
+    const arr = Array.isArray(data) ? data : Object.values(data).flat();
+
+    const typeCount = {};
+    arr.forEach((it) => {
+      const t = it && it.type ? String(it.type) : 'unknown';
+      typeCount[t] = (typeCount[t] || 0) + 1;
+    });
+
+    let filtered = arr;
+    if (filterType) {
+      filtered = arr.filter((it) => it && String(it.type) === String(filterType));
+    }
+    const max = Math.max(1, Math.min(50, Number(limit) || 10));
+
+    return JSON.stringify({
+      ok: true,
+      total: arr.length,
+      typeCount,
+      filteredCount: filtered.length,
+      sample: filtered.slice(0, max),
+    });
+  },
+  {
+    name: 'query_data_json',
+    description:
+      '查询已经解析生成的 data.json 内容：返回总条数、按 type 分布的统计，以及可选按 type 过滤后的样本。',
+    schema: z.object({
+      filterType: z
+        .string()
+        .optional()
+        .describe('可选：按 type 字段过滤（如 h5 / smallProgram / tool / form / scheme / tel）'),
+      limit: z
+        .number()
+        .optional()
+        .describe('返回样本最大条数，默认 10，最大 50'),
+    }),
+  }
+);
+
 /* -------------------------------------------------------------------------- */
 /*  Agent                                                                     */
 /* -------------------------------------------------------------------------- */
@@ -107,9 +158,13 @@ function getAgent() {
 
   _agent = createAgent({
     model: llm,
-    tools: [parseExcelTool, fetchPreviewTool],
+    tools: [parseExcelTool, fetchPreviewTool, queryDataJsonTool],
     systemPrompt:
-      '你是一个文件处理 Agent，可以使用工具解析 Excel 为 JSON，或获取小程序预览码。回答简洁中文。',
+      '你是一个文件处理助手，可使用工具：\n' +
+      '1) parse_excel_to_json —— 当用户提供 Excel 文件路径时调用，把表格解析为 data.json\n' +
+      '2) fetch_preview_qr   —— 获取小程序预览二维码（无需参数）\n' +
+      '3) query_data_json    —— 查询已解析的 data.json 总条数 / 按 type 分布 / 样本\n' +
+      '回答简洁中文，必要时主动调用工具，不要假设结果。如果需要的信息缺失，先告知用户。',
   });
   return _agent;
 }
@@ -137,8 +192,49 @@ async function runAgent(userMessage) {
   const result = await agent.invoke({
     messages: [{ role: 'user', content: userMessage }],
   });
+
+  // 提取工具调用摘要 + 对应工具结果，便于前端展示"Agent 都做了什么 / 结果是什么"
+  // - LangChain 会把每个工具返回生成一条 ToolMessage（type === 'tool' 或 role === 'tool'），
+  //   其 tool_call_id 对应发起调用的 assistant message 里的 tool_calls[].id
+  const toolResultById = {};
+  for (const m of result.messages || []) {
+    const type = m?._getType?.() || m?.type || m?.role;
+    const id = m?.tool_call_id || m?.additional_kwargs?.tool_call_id;
+    if ((type === 'tool' || type === 'ToolMessage') && id) {
+      let out = m?.content;
+      if (typeof out === 'string') {
+        try { out = JSON.parse(out); } catch { /* 保留字符串 */ }
+      }
+      toolResultById[id] = out;
+    }
+  }
+
+  const toolCalls = [];
+  for (const m of result.messages || []) {
+    const calls = m?.tool_calls || m?.additional_kwargs?.tool_calls;
+    if (Array.isArray(calls) && calls.length > 0) {
+      calls.forEach((c) => {
+        const id = c.id || c.tool_call_id;
+        let args = c.args ?? c.function?.arguments;
+        if (typeof args === 'string') {
+          try { args = JSON.parse(args); } catch { /* 保留字符串 */ }
+        }
+        toolCalls.push({
+          id,
+          name: c.name || c.function?.name,
+          args,
+          result: id ? toolResultById[id] : undefined,
+        });
+      });
+    }
+  }
+
   const last = result.messages[result.messages.length - 1];
-  return { content: last?.content ?? '', messages: result.messages };
+  return {
+    content: last?.content ?? '',
+    toolCalls,
+    messageCount: result.messages?.length ?? 0,
+  };
 }
 
 module.exports = {

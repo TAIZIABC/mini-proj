@@ -1,7 +1,6 @@
 const XLSX = require('xlsx');
 const fs = require('fs');
-const path = require('path');
-const { ChatOpenAI } = require('@langchain/openai');
+const { mapHeadersToSchema, repairFailedAnchorTags } = require('./llm');
 
 const OUTPUT_FILE_PATH = '/Users/kingjungle/Documents/work/AppletNew/pkgVideo/pages/test-url/parsed-links-output.js';
 
@@ -168,23 +167,20 @@ function escapeStr(str) {
   return str.replace(/\\/g, '\\\\').replace(/'/g, '\\\'');
 }
 
+/**
+ * 解析整段 HTML，把所有 <a> 标签解析成对象数组。
+ * - 不再写文件（写文件交给 parseExcel 统一控制，避免与 LLM 修复后的结果错位）
+ * - 返回 { parsedLinks, failedTags }，便于上层做 LLM 兜底修复
+ *
+ * @param {string} html
+ * @returns {{ parsedLinks: Array<object>, failedTags: Array<{index:number, tag:string, raw:string, reason:string}> }}
+ */
 function parseLink(html) {
-
-// 提取所有 <a> 标签
   const anchorTags = extractAnchorTags(html);
-  console.warn(`📋 找到 ${anchorTags.length} 个 <a> 标签\n`);
+  console.warn(`📋 找到 ${anchorTags.length} 个 <a> 标签`);
 
-  if (anchorTags.length === 0) {
-    console.warn('⚠️  未找到任何 <a> 标签。');
-    console.warn('   请将 HTML 内容粘贴到脚本中的 htmlContent 变量，');
-    console.warn('   或通过命令行参数指定 HTML 文件：');
-    console.warn('   node parse-links.js ./input.html\n');
-    return;
-  }
-
-// 逐个解析
   const parsedLinks = [];
-  const errors = [];
+  const failedTags = [];
 
   anchorTags.forEach((tag, index) => {
     try {
@@ -192,69 +188,76 @@ function parseLink(html) {
       if (result) {
         parsedLinks.push(result);
       } else {
-        errors.push({ index: index + 1, tag: tag.substring(0, 100), reason: '无法提取名称或属性' });
+        failedTags.push({
+          index: index + 1,
+          tag: tag.substring(0, 200),
+          raw: tag,
+          reason: '无法提取名称或属性',
+        });
       }
     } catch (err) {
-      errors.push({ index: index + 1, tag: tag.substring(0, 100), reason: err.message });
+      failedTags.push({
+        index: index + 1,
+        tag: tag.substring(0, 200),
+        raw: tag,
+        reason: err.message,
+      });
     }
   });
 
-  // 统计信息
+  return { parsedLinks, failedTags };
+}
+
+/**
+ * 把对象数组写入 OUTPUT_FILE_PATH（保持原有 PRESET_LINKS 命名）
+ * @param {Array<object>} links
+ */
+function writePresetLinksFile(links) {
+  const formatted = formatAsDataJs(links);
+  const outputContent = `// 解析时间：${new Date().toLocaleString('zh-CN')}\n// 共 ${
+    links.length
+  } 条链接\n\nconst PRESET_LINKS = [\n${formatted},\n];\n\nmodule.exports = {\n  PRESET_LINKS,\n};\n`;
+  fs.writeFileSync(OUTPUT_FILE_PATH, outputContent, 'utf-8');
+  console.warn(`✅ 解析结果已保存到：${OUTPUT_FILE_PATH}`);
+}
+
+/**
+ * 打印解析统计
+ */
+function logStats(parsedLinks, failedTags) {
   const typeCount = {};
   parsedLinks.forEach((link) => {
     typeCount[link.type] = (typeCount[link.type] || 0) + 1;
   });
-
   console.warn('📊 解析统计：');
   console.warn(`   总计解析成功：${parsedLinks.length} 条`);
-  console.warn(`   解析失败：${errors.length} 条`);
+  console.warn(`   解析失败：${failedTags.length} 条`);
   console.warn('   按类型分布：');
   Object.entries(typeCount)
     .sort((a, b) => b[1] - a[1])
     .forEach(([type, count]) => {
       console.warn(`     - ${type}: ${count} 条`);
     });
-  console.warn('');
-
-  // 打印失败的标签
-  if (errors.length > 0) {
-    console.warn('⚠️  解析失败的标签：');
-    errors.forEach((err) => {
-      console.warn(`   #${err.index}: ${err.reason}`);
-      console.warn(`     ${err.tag}...`);
-    });
-    console.warn('');
-  }
-
-  // 格式化输出
-  const formatted = formatAsDataJs(parsedLinks);
-  
-  // 保存到输出文件
-  const outputContent = `// 解析时间：${new Date().toLocaleString('zh-CN')}\n// 共 ${
-    parsedLinks.length
-  } 条链接\n\nconst PRESET_LINKS = [\n${formatted},\n];\n\nmodule.exports = {\n  PRESET_LINKS,\n};\n`;
-  fs.writeFileSync(OUTPUT_FILE_PATH, outputContent, 'utf-8');
-  console.warn(`✅ 解析结果已保存到：${OUTPUT_FILE_PATH}`);
 }
 
 
-module.exports = { parseLink, parseExcel };
+module.exports = { parseLink, parseExcel, writePresetLinksFile };
 
 /* -------------------------------------------------------------------------- */
-/*  parseExcel：借助大模型识别"工具链接"列，然后交给 parseLink 处理            */
+/*  parseExcel：                                                                */
+/*    1) LLM 把表头映射成 schema（link/name/type/appid/path/formid 等）         */
+/*    2) link 列拼成大 HTML 交给 parseLink 正则解析                             */
+/*    3) 解析失败的 tag → LLM 兜底修复                                          */
+/*    4) 用 schema 中 name/type/appid/path/formid 列补全/校正                   */
+/*    5) 写盘 + 返回扁平数组                                                    */
 /* -------------------------------------------------------------------------- */
 
 /**
- * 借助 LLM 从 Excel 表头中识别"工具链接"列；
- * 然后把该列所有单元格的 HTML 拼接，一次性交给 parseLink；
- * parseLink 会把解析结果写入 parsed-links-output.js，
- * parseExcel 读取该文件并把 PRESET_LINKS 作为扁平数组返回。
- *
  * @param {Buffer} buffer Excel 文件 Buffer
- * @returns {Promise<Array<object>>} 解析出的链接对象数组
+ * @returns {Promise<Array<object>>}
  */
 async function parseExcel(buffer) {
-  // 1) 读 Excel，取第一个 Sheet 的二维数组
+  // 1) 读 Excel
   const workbook = XLSX.read(buffer, { type: 'buffer' });
   const sheetName = workbook.SheetNames[0];
   if (!sheetName) throw new Error('Excel 中没有任何 Sheet');
@@ -263,7 +266,7 @@ async function parseExcel(buffer) {
   const rows = XLSX.utils.sheet_to_json(sheet, {
     header: 1,
     defval: '',
-    raw: false, // 让富文本/超链接也能转成字符串
+    raw: false,
     blankrows: false,
   });
   if (!rows.length) throw new Error('Excel 内容为空');
@@ -271,93 +274,89 @@ async function parseExcel(buffer) {
   const headers = rows[0].map((h) => String(h ?? '').trim());
   const dataRows = rows.slice(1);
 
-  // 2) 让 LLM 在表头里识别"工具链接"列的索引
-  const toolLinkIdx = await detectToolLinkColumn(headers);
-  if (toolLinkIdx < 0 || toolLinkIdx >= headers.length) {
-    throw new Error(`未能在表头中识别出"工具链接"列。表头: [${headers.join(', ')}]`);
+  // 2) LLM schema 映射
+  const schema = await mapHeadersToSchema(headers);
+  if (schema.link < 0) {
+    throw new Error(`未能识别"工具链接"列。表头: [${headers.join(', ')}]`);
   }
-  console.warn(`🤖 LLM 识别"工具链接"列为：第 ${toolLinkIdx + 1} 列「${headers[toolLinkIdx]}」`);
+  console.warn('🤖 表头 schema 映射：', JSON.stringify(schema));
+  console.warn(`   link 列 → 第 ${schema.link + 1} 列「${headers[schema.link]}」`);
 
-  // 3) 收集该列所有非空单元格 HTML，拼接成一个大 HTML 串
+  // 3) 拼接 link 列所有 HTML 交给 parseLink
   const htmlChunks = dataRows
-    .map((row) => String(row[toolLinkIdx] ?? '').trim())
+    .map((row) => String(row[schema.link] ?? '').trim())
     .filter((s) => s.length > 0);
-
   if (htmlChunks.length === 0) {
-    throw new Error(`列「${headers[toolLinkIdx]}」中没有任何内容`);
+    throw new Error(`列「${headers[schema.link]}」中没有任何内容`);
   }
   const mergedHtml = htmlChunks.join('\n');
 
-  // 4) 交给 parseLink（它会写文件、不返回值）
-  parseLink(mergedHtml);
+  const { parsedLinks, failedTags } = parseLink(mergedHtml);
 
-  // 5) 读回 parseLink 写出的文件，require 时清缓存避免拿到旧结果
-  delete require.cache[require.resolve(OUTPUT_FILE_PATH)];
-  // eslint-disable-next-line import/no-dynamic-require, global-require
-  const { PRESET_LINKS } = require(OUTPUT_FILE_PATH);
-  return Array.isArray(PRESET_LINKS) ? PRESET_LINKS : [];
+  // 4) LLM 兜底修复失败 tag
+  let repairedLinks = [];
+  if (failedTags.length > 0) {
+    console.warn(`🛠  正则失败 ${failedTags.length} 条，尝试用 LLM 修复…`);
+    repairedLinks = await repairFailedAnchorTags(failedTags);
+    if (repairedLinks.length > 0) {
+      console.warn(`   LLM 成功修复 ${repairedLinks.length} 条`);
+    }
+  }
+
+  let allLinks = [...parsedLinks, ...repairedLinks];
+
+  // 5) 用其他列（name/type/appid/path/formid）做行级补全
+  //    思路：对每一行，按 link 列 HTML 中识别到的链接索引去找配对项，把空字段补上
+  allLinks = enrichWithOtherColumns(allLinks, dataRows, schema);
+
+  // 6) 落盘 + 打日志
+  logStats(allLinks, failedTags.filter((_, i) => !repairedLinks[i]));
+  writePresetLinksFile(allLinks);
+
+  return allLinks;
 }
 
 /**
- * 让 LLM 从表头数组中识别"工具链接"列的索引（0-based）。
- * 容错同义词：工具链接 / 工具地址 / 链接 / 跳转链接 / Link / URL 等。
- * 失败时降级为代码模糊匹配。
+ * 用 schema 中其他列对解析结果做"补全"：
+ * - 仅在解析结果某字段缺失时，用列值填充
+ * - 当解析结果与列值不一致时，以解析结果为准（HTML 里的真实属性更可靠）
  *
- * @param {string[]} headers
- * @returns {Promise<number>}
+ * 对齐策略：按 dataRows 顺序展开 —— 第 N 行可能产生多个 link，
+ * 如果整张表 link 列每行都只放 1 个 <a> 标签（最常见情形），就能精确对齐；
+ * 否则只对"行只有 1 条解析结果"的行做补全（保守，不强行写脏）。
  */
-async function detectToolLinkColumn(headers) {
-  // 先尝试 LLM
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (apiKey) {
-    try {
-      const llm = new ChatOpenAI({
-        apiKey,
-        model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
-        temperature: 0,
-        configuration: {
-          baseURL: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1',
-        },
-      });
+function enrichWithOtherColumns(links, dataRows, schema) {
+  // 先把每一行的 HTML 解析一次，得出"每行产生多少条 link"
+  const rowLinkCounts = dataRows.map((row) => {
+    const html = String(row[schema.link] ?? '').trim();
+    if (!html) return 0;
+    return extractAnchorTags(html).length;
+  });
 
-      const prompt = `你是一个表格列名识别助手。下面是一张 Excel 表的表头数组（按列顺序）：
-${JSON.stringify(headers)}
+  // 顺序消费 links，与 dataRows 的链接计数对齐
+  let cursor = 0;
+  for (let r = 0; r < dataRows.length; r += 1) {
+    const count = rowLinkCounts[r];
+    if (!count) continue;
+    const row = dataRows[r];
 
-请从中找出"工具链接"列的索引（0-based）。该列通常包含 <a> 标签或 URL，列名同义词包括但不限于：工具链接、工具地址、链接、跳转链接、Link、URL、地址、href。
-
-只允许返回一个 JSON 对象，格式严格如下，不要任何额外文字、解释或代码块标记：
-{"index": <数字>, "header": "<对应列名>"}
-
-如果完全无法识别，返回 {"index": -1, "header": ""}。`;
-
-      const resp = await llm.invoke(prompt);
-      const text = typeof resp.content === 'string'
-        ? resp.content
-        : Array.isArray(resp.content)
-          ? resp.content.map((c) => (typeof c === 'string' ? c : c.text || '')).join('')
-          : '';
-
-      // 抠出 JSON
-      const match = text.match(/\{[\s\S]*?\}/);
-      if (match) {
-        const parsed = JSON.parse(match[0]);
-        if (Number.isInteger(parsed.index) && parsed.index >= 0) {
-          return parsed.index;
+    // 仅当本行恰好产生 1 条 link 时做补全
+    if (count === 1 && cursor < links.length) {
+      const obj = links[cursor];
+      const fill = (key, colIdx) => {
+        if (colIdx < 0) return;
+        const val = String(row[colIdx] ?? '').trim();
+        if (val && (obj[key] === undefined || obj[key] === '')) {
+          obj[key] = val;
         }
-      }
-    } catch (err) {
-      console.warn('⚠️  LLM 识别工具链接列失败，降级为关键字匹配：', err.message);
+      };
+      fill('name', schema.name);
+      fill('type', schema.type);
+      fill('appid', schema.appid);
+      fill('path', schema.path);
+      fill('formid', schema.formid);
     }
-  } else {
-    console.warn('⚠️  未配置 DEEPSEEK_API_KEY，使用关键字匹配识别工具链接列');
+    cursor += count;
   }
-
-  // 降级：关键字模糊匹配
-  const keywords = ['工具链接', '工具地址', '跳转链接', '链接', 'link', 'url', '地址', 'href'];
-  const lowered = headers.map((h) => h.toLowerCase());
-  for (const kw of keywords) {
-    const idx = lowered.findIndex((h) => h.includes(kw.toLowerCase()));
-    if (idx >= 0) return idx;
-  }
-  return -1;
+  return links;
 }

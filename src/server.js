@@ -109,6 +109,30 @@ app.post('/api/agent', async (req, res) => {
 });
 
 /* -------------------------------------------------------------------------- */
+/*  统一错误处理：保证所有 /api/* 响应都是 JSON                                  */
+/* -------------------------------------------------------------------------- */
+
+// 404（仅作用于 /api/*；静态资源由前面的 express.static 处理）
+app.use('/api', (req, res) => {
+  res.status(404).json({ ok: false, error: `接口不存在: ${req.method} ${req.originalUrl}` });
+});
+
+// 兜底错误中间件：接 body-parser JSON 解析失败、multer 错误、路由内部抛出的错误
+// 必须是 4 参函数，Express 才会识别为 error handler
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('[global-error]', err);
+  const status = err.status || err.statusCode || 500;
+  // body-parser JSON 解析错误 → 400
+  const code = err.type === 'entity.parse.failed' ? 400 : status;
+  res.status(code).json({
+    ok: false,
+    error: err.message || '服务器内部错误',
+    type: err.type || err.name || undefined,
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 
 app.listen(PORT, () => {
   console.log(`\n  ✅ Excel-Agent 已启动`);

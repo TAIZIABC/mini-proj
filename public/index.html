@@ -102,6 +102,156 @@
     }
     .qr-box img { max-width: 260px; width: 100%; }
     .muted { color: #718096; font-size: 12px; margin-top: 8px; }
+
+    /* ============ 聊天区（iM 气泡风格） ============ */
+    .chat-log {
+      max-height: 420px;
+      overflow-y: auto;
+      background: linear-gradient(180deg, #f7fafc 0%, #edf2f7 100%);
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 16px;
+      margin: 10px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .msg {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      max-width: 100%;
+    }
+    .msg.user { flex-direction: row-reverse; }
+    .avatar {
+      flex: 0 0 32px;
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px;
+      color: #fff;
+      font-weight: 600;
+    }
+    .msg.user .avatar  { background: linear-gradient(135deg, #4299e1, #3182ce); }
+    .msg.bot .avatar   { background: linear-gradient(135deg, #48bb78, #38a169); }
+    .bubble {
+      max-width: 78%;
+      padding: 10px 14px;
+      border-radius: 14px;
+      font-size: 13.5px;
+      line-height: 1.65;
+      word-break: break-word;
+      box-shadow: 0 1px 3px rgba(0,0,0,.06);
+      position: relative;
+    }
+    .msg.user .bubble {
+      background: #4299e1;
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .msg.bot .bubble {
+      background: #fff;
+      color: #1a202c;
+      border-bottom-left-radius: 4px;
+    }
+    .bubble .body { white-space: pre-wrap; }
+    .bubble .body code {
+      background: rgba(0,0,0,.08);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: Menlo, Consolas, monospace;
+    }
+    .msg.user .bubble .body code { background: rgba(255,255,255,.2); }
+    .bubble .body strong { font-weight: 600; }
+
+    /* 工具调用徽章（折叠） */
+    .tool-chips {
+      margin-top: 8px;
+      display: flex; flex-wrap: wrap; gap: 4px;
+    }
+    .tool-chip {
+      font-size: 11px;
+      background: #edf2f7;
+      color: #4a5568;
+      padding: 2px 8px;
+      border-radius: 10px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .tool-chip:hover { background: #e2e8f0; }
+    .tool-detail {
+      margin-top: 6px;
+      font-size: 11px;
+      color: #4a5568;
+      background: #f7fafc;
+      border-left: 3px solid #cbd5e0;
+      padding: 6px 10px;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      font-family: Menlo, Consolas, monospace;
+      display: none;
+    }
+    .tool-detail.open { display: block; }
+
+    /* 聊天里的图片（预览码） */
+    .inline-qr {
+      margin-top: 10px;
+      padding: 10px;
+      background: #fafbfd;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      text-align: center;
+    }
+    .inline-qr img { max-width: 220px; width: 100%; border-radius: 4px; }
+    .inline-qr .hint { color: #718096; font-size: 11px; margin-top: 6px; }
+
+    /* 输入区 */
+    .chat-input { display: flex; gap: 8px; }
+    .chat-input input {
+      flex: 1;
+      padding: 11px 14px;
+      border: 1px solid #cbd5e0;
+      border-radius: 22px;
+      font-size: 14px;
+      transition: border-color .2s;
+    }
+    .chat-input input:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102,126,234,.15);
+    }
+    .chat-input button {
+      padding: 10px 22px;
+      border-radius: 22px;
+    }
+    .quick {
+      display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px;
+    }
+    .quick button {
+      padding: 5px 12px; font-size: 12px;
+      background: #fff;
+      color: #2d3748;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+    }
+    .quick button:hover:not(:disabled) { background: #edf2f7; }
+
+    /* 思考中 3 个点动效 */
+    .typing span {
+      display: inline-block;
+      width: 6px; height: 6px;
+      margin: 0 1px;
+      background: #a0aec0;
+      border-radius: 50%;
+      animation: blink 1.2s infinite;
+    }
+    .typing span:nth-child(2) { animation-delay: .2s; }
+    .typing span:nth-child(3) { animation-delay: .4s; }
+    @keyframes blink {
+      0%, 60%, 100% { opacity: .2; transform: translateY(0); }
+      30% { opacity: 1; transform: translateY(-3px); }
+    }
   </style>
 </head>
 <body>
@@ -130,6 +280,29 @@
           <span class="muted">将调用本地 30747 端口接口</span>
         </div>
         <div id="previewResult"></div>
+      </div>
+
+      <!-- Step 3 -->
+      <div class="step">
+        <h2><span class="badge">3</span>自然语言入口（Agent）</h2>
+        <div id="chatLog" class="chat-log">
+          <div class="msg bot">
+            <div class="avatar">🤖</div>
+            <div class="bubble">
+              <div class="body">你好，我可以帮你解析 Excel、获取预览码、查询 data.json 内容。试试下面的快捷指令，或直接输入问题。</div>
+            </div>
+          </div>
+        </div>
+        <div class="chat-input">
+          <input id="chatInput" placeholder="例如：data.json 里有几条 type=h5 的？" />
+          <button id="btnSend">发送</button>
+        </div>
+        <div class="quick">
+          <button data-q="重新获取一次小程序预览码">🎯 重拿预览码</button>
+          <button data-q="data.json 里 type 分布情况是怎样的？">📊 type 分布</button>
+          <button data-q="给我 data.json 里前 5 条 type=h5 的链接">🔍 前 5 条 h5</button>
+          <button data-q="data.json 总共有多少条记录？">🔢 总条数</button>
+        </div>
       </div>
 
     </div>
@@ -215,6 +388,156 @@
         '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
       }[c]));
     }
+
+    /* ---------- Step 3: 聊天 ---------- */
+    const chatLog = $('chatLog');
+
+    // 极简 markdown 渲染：**bold** / `code`，其余保留纯文本并安全转义
+    function renderMarkdown(text) {
+      let s = escapeHtml(String(text || ''));
+      s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+      s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      return s;
+    }
+
+    // 工具名 → 中文显示名
+    const TOOL_LABELS = {
+      parse_excel_to_json: '📄 解析 Excel',
+      fetch_preview_qr:    '📱 获取预览码',
+      query_data_json:     '📊 查询 data.json',
+    };
+
+    /**
+     * 从 toolCalls 里抽取"可在聊天气泡内内嵌展示"的特殊内容：
+     * - fetch_preview_qr：内嵌二维码图片
+     * 返回 HTML 字符串（可能为空）
+     */
+    function renderInlineArtifacts(toolCalls) {
+      if (!Array.isArray(toolCalls)) return '';
+      const parts = [];
+      toolCalls.forEach((c) => {
+        if (c.name === 'fetch_preview_qr' && c.result && c.result.ok && c.result.publicUrl) {
+          const url = escapeHtml(c.result.publicUrl);
+          parts.push(`
+            <div class="inline-qr">
+              <img src="${url}" alt="小程序预览码" />
+              <div class="hint">扫码预览 · <a href="${url}" target="_blank">原图</a></div>
+            </div>
+          `);
+        }
+      });
+      return parts.join('');
+    }
+
+    /** 构造一条消息 DOM */
+    function buildMsg(role, body, toolCalls) {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg ' + role;
+
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar';
+      avatar.textContent = role === 'user' ? '我' : '🤖';
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+
+      const bodyDiv = document.createElement('div');
+      bodyDiv.className = 'body';
+      bodyDiv.innerHTML = renderMarkdown(body);
+      bubble.appendChild(bodyDiv);
+
+      // 内嵌产物（如预览码图片）
+      const artifacts = renderInlineArtifacts(toolCalls);
+      if (artifacts) {
+        const box = document.createElement('div');
+        box.innerHTML = artifacts;
+        bubble.appendChild(box);
+      }
+
+      // 工具 chip + 详情
+      if (Array.isArray(toolCalls) && toolCalls.length) {
+        const chips = document.createElement('div');
+        chips.className = 'tool-chips';
+        toolCalls.forEach((c, i) => {
+          const chip = document.createElement('span');
+          chip.className = 'tool-chip';
+          chip.textContent = TOOL_LABELS[c.name] || ('🔧 ' + (c.name || 'tool'));
+          const detail = document.createElement('div');
+          detail.className = 'tool-detail';
+          const argsStr = typeof c.args === 'string' ? c.args : JSON.stringify(c.args || {}, null, 2);
+          const resStr  = c.result === undefined ? '(无)' :
+                          typeof c.result === 'string' ? c.result : JSON.stringify(c.result, null, 2);
+          detail.textContent = `#${i+1} ${c.name}\n入参：${argsStr}\n结果：${resStr}`;
+          chip.addEventListener('click', () => detail.classList.toggle('open'));
+          chips.appendChild(chip);
+          chips.appendChild(detail);
+        });
+        bubble.appendChild(chips);
+      }
+
+      wrap.appendChild(avatar);
+      wrap.appendChild(bubble);
+      return wrap;
+    }
+
+    function appendMsg(role, body, toolCalls) {
+      const node = buildMsg(role, body, toolCalls);
+      chatLog.appendChild(node);
+      chatLog.scrollTop = chatLog.scrollHeight;
+      return node;
+    }
+
+    /** 思考中占位气泡 */
+    function appendTyping() {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg bot';
+      wrap.innerHTML = `
+        <div class="avatar">🤖</div>
+        <div class="bubble">
+          <div class="body typing"><span></span><span></span><span></span></div>
+        </div>`;
+      chatLog.appendChild(wrap);
+      chatLog.scrollTop = chatLog.scrollHeight;
+      return wrap;
+    }
+
+    async function sendChat(q) {
+      const text = (q || $('chatInput').value || '').trim();
+      if (!text) return;
+      $('chatInput').value = '';
+      appendMsg('user', text);
+
+      const placeholder = appendTyping();
+      $('btnSend').disabled = true;
+
+      try {
+        const resp = await fetch('/api/agent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text }),
+        });
+        const data = await resp.json();
+        chatLog.removeChild(placeholder);
+        if (!data.ok) {
+          appendMsg('bot', '出错了：' + (data.error || '未知错误'));
+        } else {
+          appendMsg('bot', data.content || '(无内容)', data.toolCalls);
+        }
+      } catch (e) {
+        chatLog.removeChild(placeholder);
+        appendMsg('bot', '请求失败：' + e.message);
+      } finally {
+        $('btnSend').disabled = false;
+      }
+    }
+
+    $('btnSend').addEventListener('click', () => sendChat());
+    $('chatInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendChat();
+    });
+    document.querySelectorAll('.quick button').forEach((btn) => {
+      btn.addEventListener('click', () => sendChat(btn.getAttribute('data-q')));
+    });
   </script>
 </body>
 </html>

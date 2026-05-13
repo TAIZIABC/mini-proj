@@ -15,6 +15,9 @@ yarn-error.log*
 # Runtime / temp files
 temp/
 uploads/
+docs/
+drafts/
+images/
 
 # OS
 .DS_Store

@@ -60,7 +60,7 @@ cp .env.example .env
 | `PORT` | `3000` |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com/v1` |
 | `DEEPSEEK_MODEL` | `deepseek-chat` |
-| `PREVIEW_API` | 指向本地 30747 的 AppletNew 预览接口 |
+| `PREVIEW_API` | 指向本地小程序项目预览接口，可参考https://developers.weixin.qq.com/miniprogram/dev/devtools/cli.html |
 
 ## 启动
 

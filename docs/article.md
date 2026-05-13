@@ -219,48 +219,8 @@ const agent = createAgent({
 
 > 🖼 **[此处插入截图：用户提问 + Agent 回复 + 可点击展开的"工具调用"chip]**
 
----
 
-## 4. 踩坑记录（搜索 SEO 友好）
-
-### 坑 1：DeepSeek "thinking 模式"不能直接跑 tool-call
-
-我最开始用的是 `deepseek-v4-flash`，纯聊天 OK，一旦涉及工具调用就 500：
-
-```
-400 The `reasoning_content` in the thinking mode must be passed back to the API.
-```
-
-thinking 模式要求把每一轮的 `reasoning_content` 回传给下一轮，**LangChain.js 目前不自动处理**。
-
-解决：换回 `deepseek-chat`（非 thinking 模式）。聊天 + 工具调用全场景可用。
-
-```env
-DEEPSEEK_MODEL=deepseek-chat
-```
-
-### 坑 2：`createReactAgent` 已弃用
-
-`@langchain/langgraph/prebuilt` 的 `createReactAgent` 被标记为 deprecated。新 API 在 `langchain` 包顶层：
-
-```js
-// ❌ 旧
-const { createReactAgent } = require('@langchain/langgraph/prebuilt');
-createReactAgent({ llm, tools });
-
-// ✅ 新
-const { createAgent } = require('langchain');
-createAgent({ model: llm, tools, systemPrompt: '...' });
-```
-
-### 坑 3：peerDep 冲突
-
-`@langchain/langgraph@1.x` 要求 `@langchain/core@^1.1.44`，但 `langchain@0.3` 拉的是 `core@0.3`。  
-升级方案：**整套拉到 1.x**（`langchain@^1` + `@langchain/core@^1` + `@langchain/openai@^1` + `@langchain/langgraph@^1`）。
-
----
-
-## 5. 做完之后我发现的 3 件事
+## 4. 做完之后我发现的 3 件事
 
 ### ① Agent 不是"更聪明的 Chat"，是"更自由的工作流"
 

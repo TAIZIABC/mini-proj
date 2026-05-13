@@ -169,7 +169,6 @@ function escapeStr(str) {
 
 /**
  * 解析整段 HTML，把所有 <a> 标签解析成对象数组。
- * - 不再写文件（写文件交给 parseExcel 统一控制，避免与 LLM 修复后的结果错位）
  * - 返回 { parsedLinks, failedTags }，便于上层做 LLM 兜底修复
  *
  * @param {string} html
@@ -241,7 +240,6 @@ function logStats(parsedLinks, failedTags) {
 }
 
 
-module.exports = { parseLink, parseExcel, writePresetLinksFile };
 
 /* -------------------------------------------------------------------------- */
 /*  parseExcel：                                                                */
@@ -305,9 +303,6 @@ async function parseExcel(buffer) {
 
   let allLinks = [...parsedLinks, ...repairedLinks];
 
-  // 5) 用其他列（name/type/appid/path/formid）做行级补全
-  //    思路：对每一行，按 link 列 HTML 中识别到的链接索引去找配对项，把空字段补上
-  allLinks = enrichWithOtherColumns(allLinks, dataRows, schema);
 
   // 6) 落盘 + 打日志
   logStats(allLinks, failedTags.filter((_, i) => !repairedLinks[i]));
@@ -316,47 +311,4 @@ async function parseExcel(buffer) {
   return allLinks;
 }
 
-/**
- * 用 schema 中其他列对解析结果做"补全"：
- * - 仅在解析结果某字段缺失时，用列值填充
- * - 当解析结果与列值不一致时，以解析结果为准（HTML 里的真实属性更可靠）
- *
- * 对齐策略：按 dataRows 顺序展开 —— 第 N 行可能产生多个 link，
- * 如果整张表 link 列每行都只放 1 个 <a> 标签（最常见情形），就能精确对齐；
- * 否则只对"行只有 1 条解析结果"的行做补全（保守，不强行写脏）。
- */
-function enrichWithOtherColumns(links, dataRows, schema) {
-  // 先把每一行的 HTML 解析一次，得出"每行产生多少条 link"
-  const rowLinkCounts = dataRows.map((row) => {
-    const html = String(row[schema.link] ?? '').trim();
-    if (!html) return 0;
-    return extractAnchorTags(html).length;
-  });
-
-  // 顺序消费 links，与 dataRows 的链接计数对齐
-  let cursor = 0;
-  for (let r = 0; r < dataRows.length; r += 1) {
-    const count = rowLinkCounts[r];
-    if (!count) continue;
-    const row = dataRows[r];
-
-    // 仅当本行恰好产生 1 条 link 时做补全
-    if (count === 1 && cursor < links.length) {
-      const obj = links[cursor];
-      const fill = (key, colIdx) => {
-        if (colIdx < 0) return;
-        const val = String(row[colIdx] ?? '').trim();
-        if (val && (obj[key] === undefined || obj[key] === '')) {
-          obj[key] = val;
-        }
-      };
-      fill('name', schema.name);
-      fill('type', schema.type);
-      fill('appid', schema.appid);
-      fill('path', schema.path);
-      fill('formid', schema.formid);
-    }
-    cursor += count;
-  }
-  return links;
-}
+module.exports = { parseLink, parseExcel, writePresetLinksFile };
